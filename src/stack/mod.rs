@@ -1,48 +1,75 @@
 
 #[derive(Debug,Clone)]
-pub struct Stack{
-    stack_pointer: usize,
-    data: [usize;10],
+pub struct Stack<T>{
+    data: Option<T>,
+    next: Option<Box<Stack<T>>>,
 }
 
-impl  Stack{
-    pub fn new() -> Self {
-        Stack {
-            data: Default::default(),
-            stack_pointer: 0,
+impl<T> Stack<T>{
+    pub fn new(d: T) -> Self{
+        Stack { data: Some(d), next: None }
+    }
+
+    pub fn push(&mut self, data:T){
+        let mut current = self;
+        while current.next.is_some(){
+            current = current.next.as_mut().unwrap();
+        }
+        current.next = Some(Box::new(Stack{
+            data: Some(data),
+            next: None
+        }));
+    }
+
+    pub fn peek(&mut self) -> Option<&T>{
+        if let Some(d) = &mut self.next{
+            return d.peek();
+        }else{
+            return self.data.as_ref();
         }
     }
 
-    pub fn push(&mut self, data: usize) -> &mut Self{
-        if self.stack_pointer == self.data.len() {
-            return self;
-        }
-        self.data[self.stack_pointer] = data;
-        self.stack_pointer += 1 ;
+    pub fn pop(&mut self) ->&mut Self {
+        self._pop();
         return self;
     }
 
-    pub fn pop(&mut self) -> Option<usize> {
-        if self.stack_pointer == 0 {
+    fn _pop(&mut self) {
+        if let Some(next_node) = &mut self.next {
+            if let Some(_) = next_node.next {
+                next_node._pop();
+            } else {
+                self.next = None;
+            }
+        } else {
+            self.next = None;
+            self.data = None;
+        }
+    }
+
+    pub fn get_by_idx(&mut self, index: i32) -> Option<&T>{
+        if index == 0 {
+            return self.data.as_ref();
+        }
+        if let Some(next_node) = &mut self.next {
+            return next_node.get_by_idx(index-1);
+        }else{
             return None;
         }
-        self.stack_pointer -= 1;
-        return Some(self.data[self.stack_pointer]);
     }
 
-    pub fn get(&self) -> &[usize] {
-        return &self.data[0..self.stack_pointer]
-    }
-
-    pub fn peek(&self) -> Option<&usize> {
-        if self.stack_pointer == 0 {
-            return None;
+    pub fn iter< F: Fn(Option<&T>, i32) + Copy>(&mut self, closure: F){
+        let mut index = 0;
+        let mut current = self;
+        while current.next.is_some(){
+            closure(current.data.as_ref(),index);
+            index += 1;
+            current = current.next.as_mut().unwrap();
         }
-        return Some(&self.data[self.stack_pointer - 1]);
+        if let Some(_) = current.data{
+            closure(current.data.as_ref(), index);
+        }
     }
-
-    pub fn size(&self) -> usize{
-        return self.stack_pointer;
-    }
+    
 
 }
