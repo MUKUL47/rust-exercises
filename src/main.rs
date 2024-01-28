@@ -10,7 +10,8 @@ fn main(){
     let mut hashmap = hashmap::MyHashMap::new(10);
     hashmap.set("name", "John");
     hashmap.set("naem", "John1");
-    hashmap.set("mane", "John3");
+    hashmap.set("mane", "33");
+    hashmap.set("asd", "asd");
+    println!("{:?}",hashmap.get("asd"));
     // hashmap.set("age", "25");
-    println!("{:?}",hashmap.get("name"));
 }
