@@ -14,7 +14,4 @@ mod todo;
 mod trie;
 mod hashmap;
 mod traits;
-fn main() {
-    traits::render_area_traits();
-    // hashmap.set("age", "25");
-}
+fn main() {}
