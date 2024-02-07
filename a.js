@@ -1,6 +1,6 @@
 function iterate(node, tree = treeNode, init = false) {
   if (init) {
-    tree["type"] = typeof node;
+    tree["type"] = Array.isArray(node) ? "array" : typeof node;
     tree["children"] = [];
   }
   let target = init ? tree.children : tree;
@@ -22,7 +22,7 @@ function iterate(node, tree = treeNode, init = false) {
     }
   }
 }
-class Validator {
+class _Validator {
   data;
   object(obj = {}, flag) {
     let children = [];
@@ -55,6 +55,14 @@ class Validator {
       type: "string",
     };
   }
+  static number() {
+    return {
+      type: "number",
+    };
+  }
+  static required(child) {
+    return { ...child, required: true };
+  }
 }
 // console.log(JSON.stringify(v.data, 3, null));
 // console.log(JSON.stringify(treeNode, null, 1));
@@ -68,7 +76,7 @@ function joinBranches(
   let children = node.children;
   const isA = node.type === "array";
   children?.forEach((child, index) => {
-    const DEFAULT = isA ? "_" : child?.name || child?.key || "_";
+    const DEFAULT = isA && isSchema ? index : child?.name || child?.key || "_";
     let v = `${prefix}.${DEFAULT}`;
     totalNodes.push([v, child]);
     joinBranches(child, v, totalNodes, isSchema);
@@ -136,25 +144,42 @@ function validate(schemaJson, payloadJson) {
 
 const v = new Validator();
 const fourLevelSchema = v.object({
-  hello: Validator.object({
-    key: Validator.string(),
-    type: Validator.array(
-      Validator.string(),
-      Validator.array(Validator.string())
-    ),
-  }),
+  name: Validator.required(Validator.string()),
+  values: Validator.array(Validator.string(), Validator.number()),
 });
+let arr3 = { name: "2", values: [{}] };
 let treeNodeCorrect = {};
-iterate(
-  {
-    hello: {
-      key: "property",
-    },
-  },
-  treeNodeCorrect,
-  !!1
-);
-let s = union(joinBranches(v.data, "JSON", [], true));
-let p = union(joinBranches(treeNodeCorrect));
-console.log(s, p);
-console.log(validate(s, p));
+iterate(arr3, treeNodeCorrect, !!1);
+let schema = union(joinBranches(v.data, "JSON", []));
+// let p = union(joinBranches(treeNodeCorrect, "JSON", [], true));
+console.log(schema);
+console.log(validator(treeNodeCorrect));
+// console.log(validate(s, p));
+
+function validator(node, prefix = "JSON", prefix_index = "JSON") {
+  let children = node.children;
+  if (!schema[prefix]) throw [node, prefix];
+  const recursiveChildren = [];
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const DEFAULT = node.type != "array" ? child?.key ?? child.name : "_";
+    const DEFAULT_INDEX = child?.key ?? child.name;
+    let key = `${prefix}.${DEFAULT}`;
+    let key_index = `${prefix_index}.${DEFAULT_INDEX}`;
+    const dataType = schema[key]?.find(
+      (schemaData) => schemaData.type == child.type
+    );
+    if (!dataType) {
+      throw `Expected ${schema[key]
+        ?.map((v) => v.type)
+        .join(" or ")
+        .trim()} but found ${child.type} at ${key_index}`;
+    }
+    if (["array", "object"].includes(dataType.type)) {
+      recursiveChildren.push([child, key, key_index]);
+    }
+  }
+  recursiveChildren.forEach(([c, childPrefix, key_index]) =>
+    validator(c, childPrefix, key_index)
+  );
+}
