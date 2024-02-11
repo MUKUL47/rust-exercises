@@ -21,6 +21,7 @@ class DataType {
   }
 }
 class V {
+  static objectKeysMap = new Map();
   static any() {
     return new DataType({ type: "any" });
   }
@@ -46,7 +47,10 @@ class V {
     for (let key in obj) {
       children.push({ name: key, ...obj[key] });
     }
-    return new DataType({ type: "object", children });
+    return new DataType({
+      type: "object",
+      children,
+    });
   }
 
   static #joinBranches(
@@ -63,15 +67,37 @@ class V {
       let v = `${prefix}.${DEFAULT}`;
       totalNodes.push([
         v,
-        { ...child.value, children: child.value?.children?.length },
+        {
+          ...child.value,
+          children: child.value?.children?.length,
+        },
       ]);
+      if (child.value.type === "object") {
+        V.updateObjectKeys(v, child.value.children);
+      }
       V.#joinBranches(child, v, totalNodes, isSchema);
     });
     totalNodes = [
-      ["JSON", { ...node.value, children: node.value?.children?.length }],
+      [
+        "JSON",
+        {
+          ...node.value,
+          children: node.value?.children?.length,
+        },
+      ],
       ...totalNodes,
     ];
+    if (node.value.type === "object") {
+      V.updateObjectKeys("JSON", node.value.children);
+    }
     return totalNodes;
+  }
+
+  static updateObjectKeys(key, children) {
+    V.objectKeysMap.set(
+      key,
+      children.map((v) => ({ ...v, required: !!v.value.required, value: null }))
+    );
   }
   static #parseSchema(v) {
     if (!v.value?.children) throw new Error("Only Objects or Array!");
@@ -101,9 +127,13 @@ class Validator {
   unknownFields = new Set();
   childParentSet = new Map();
   arrayFields = new Map();
+  objectStack = new Array();
+  visitedRequiredFields = new Map();
+  childParentRelationship = new Map();
   constructor(schema) {
     this.schema = schema;
     for (let key in this.schema) {
+      this.childParentRelationship.set(key, this.schema?.[key]?.[0]?.parent);
       const filter = this.schema[key].filter((s) => s.required);
       filter.forEach((f) => {
         this.requiredFields.set(`${key}-${f.type}`, 0);
@@ -128,7 +158,6 @@ class Validator {
     }
     let target = init ? tree.children : tree;
     if (parentNode?.type === "array") {
-      console.log(parentNode.name, node.length);
       parentNode.length = node.length;
     }
     for (let key in node) {
@@ -157,17 +186,17 @@ class Validator {
   }
 
   checkRequiredFields() {
-    this.requiredFields.forEach((value, key) => {
-      if (value === 0) {
-        throw `${key} not found`;
-      }
-    });
+    // this.requiredFields.forEach((value, key) => {
+    //   if (value === 0) {
+    //     throw `${key} not found`;
+    //   }
+    // });
   }
   startValidation(node) {
     this.validate(node);
     this.checkRequiredFields();
   }
-  validate(node, prefix = "JSON", prefix_index = "JSON") {
+  validate(node, prefix = "JSON", prefix_index = "JSON", depth = 0) {
     let children = node.children;
     if (prefix === "JSON" && this.schema[prefix][0].type != node.type)
       throw `Expected ${this.schema[prefix]
@@ -175,6 +204,7 @@ class Validator {
         .join(" or ")
         .trim()} but found ${node.type} at ${prefix}`;
     const recursiveChildren = [];
+    const objectKeys = [];
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       const DEFAULT = node.type != "array" ? child?.key ?? child.name : "_";
@@ -191,38 +221,53 @@ class Validator {
       const dataType = this.schema[key]?.find(
         (schemaData) => schemaData.type == child.type
       );
+      const currentSchemaTypes = this.schema[key]?.map((v) => v.type) || [];
       if (!dataType) {
-        throw `Expected ${this.schema[key]
-          ?.map((v) => v.type)
-          .join(" or ")
-          .trim()} but found ${child.type} at ${key_index}`;
+        if (currentSchemaTypes[0] === "any") continue;
+        throw `Expected ${currentSchemaTypes.join(" or ").trim()} but found ${
+          child.type
+        } at ${key_index}`;
       }
-      if (this.requiredFields.has(`${key}-${dataType.type}`)) {
-        this.requiredFields.set(
-          `${key}-${dataType.type}`,
-          this.requiredFields.get(`${key}-${dataType.type}`) + 1
-        );
-      }
+      const defaultKey = `${prefix}.${DEFAULT}`;
+      const originalKey = `${prefix_index}.${DEFAULT_INDEX}`;
       if (["array", "object"].includes(dataType.type)) {
-        console.log(
-          `${prefix_index}.${DEFAULT_INDEX}`,
-          "------",
-          `${prefix}.${DEFAULT}`,
-          "-----------",
-          dataType.type
-        );
-        if (child.type === "array") {
-          this.arrayFields.set(
-            key,
-            !this.arrayFields.has(key)
-              ? [{ length: child.length, key_index }]
-              : [
-                  ...this.arrayFields.get(key),
-                  { length: child.length, key_index },
-                ]
-          );
-        }
         recursiveChildren.push([child, key, key_index]);
+      }
+      if (node.type === "array") {
+        objectKeys.push(child.type);
+      } else {
+        objectKeys.push(child.name ?? child.key);
+      }
+    }
+    const isArray = node.type === "array";
+    if (isArray) {
+      const arrayKey = `${prefix}._`;
+      const filteredRequiredKeys = this.schema[arrayKey].filter(
+        (k) => k.required
+      );
+      const missingKeys = filteredRequiredKeys.filter(
+        (obj) => !objectKeys.includes(obj.type)
+      );
+      if (missingKeys.length) {
+        throw new Error(
+          `Missing type(s) ${missingKeys
+            .map((v) => v.type)
+            .join(", ")} for ${prefix}`
+        );
+      }
+    } else {
+      const filteredRequiredKeys =
+        V.objectKeysMap.get(prefix)?.filter((k) => k.required) || [];
+
+      const missingKeys = filteredRequiredKeys.filter(
+        (obj) => !objectKeys.includes(obj.name)
+      );
+      if (missingKeys.length) {
+        throw new Error(
+          `Missing keys(s) [${missingKeys
+            .map((v) => v.name)
+            .join(", ")}] for ${prefix_index}`
+        );
       }
     }
     recursiveChildren.forEach(([c, childPrefix, key_index]) =>
@@ -231,52 +276,78 @@ class Validator {
   }
 }
 let v = V.object({
-  data: V.array(
-    V.number(),
+  category: V.string().required(),
+  quantity: V.number().required(),
+  items: V.array(
     V.object({
-      contacts: V.array(
+      itemName: V.string().required(),
+      itemPrice: V.number().required(),
+      subItems: V.array(
         V.object({
-          type: V.string(),
-          value: V.object({
-            k: V.object({ m: V.array(V.string()).required() }),
-          }),
-          // types: V.array(V.object({ k: V.string().required() })),
-        }).required()
-      ),
+          subItemName: V.string().required(),
+          subItemQuantity: V.number().required(),
+          subItemDetails: V.array(V.string().required()).required(),
+          customAttribute: V.any(),
+        })
+      ).required(),
+      additionalInfo: V.any(),
     })
-      // .allowUnknown()
-      .required()
-  ),
-});
-
+  ).required(),
+  metadata: V.any(),
+}).allowUnknown();
 const schema = V.generateSchema(v);
 const vv = new Validator(schema);
 let treeNodeCorrect = {};
 let arr = {
-  data: [
+  category: "Electronics",
+  quantity: 2,
+  items: [
     {
-      contacts: [
+      itemName: "Laptop",
+      itemPrice: 1200,
+      subItems: [
         {
-          value: { k: { m: ["123"] } },
+          subItemName: "Processor",
+          subItemQuantity: 1,
+          subItemDetails: [],
+          customAttribute: { cores: 8 },
         },
-        {},
-        { value: {} },
+        {
+          subItemName: "RAM",
+          subItemQuantity: 2,
+          subItemDetails: ["16GB DDR4"],
+          customAttribute: { type: "Corsair" },
+        },
       ],
+      additionalInfo: { brand: "Dell" },
     },
     {
-      contacts: [
+      itemName: "Smartphone",
+      itemPrice: 800,
+      subItems: [
         {
-          value: { k: { m: ["123"] } },
+          subItemName: "Camera",
+          subItemQuantity: 2,
+          subItemDetails: ["12MP", "4K video"],
+          customAttribute: { type: "Dual" },
+        },
+        {
+          subItemName: "Battery",
+          subItemQuantity: 1,
+          subItemDetails: ["4000mAh"],
         },
       ],
+      additionalInfo: { brand: "Samsung" },
     },
-    { contacts: [] },
-    {},
-    2,
   ],
+  metadata: { orderDate: "2024-02-14" },
+  unexpectedKey: "This key is unexpected but allowed in the schema",
 };
-console.log(vv.validateJson(arr, treeNodeCorrect, !!1));
-vv.startValidation(treeNodeCorrect);
-console.log(vv.requiredFields);
-console.log(vv.arrayFields);
-console.log(vv.childParentSet);
+
+vv.validateJson(arr, treeNodeCorrect, !!1);
+try {
+  vv.startValidation(treeNodeCorrect);
+} catch (e) {
+  console.log(e);
+}
+console.log(vv.schema);
